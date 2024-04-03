@@ -1,0 +1,205 @@
+#only for CDS ---on-target
+import re
+import csv
+from Bio import SeqIO
+
+# Define the path to the FASTA file
+file_path = "/path/to/cds_from_genomic.fna"
+
+# Function to extract sequences from a FASTA file
+def extract_sequences(file_path):
+    sequences = []
+    with open(file_path, 'r') as file:
+        for record in SeqIO.parse(file, "fasta"):
+            sequences.append(str(record.seq).upper())
+    return sequences
+
+sequences = extract_sequences(file_path)
+
+# Function to design spacers based on a given sequence
+def spacer_design(sequence):
+    spacers = []
+    # Define the regex pattern for the spacer (TTT followed by 21 nucleotides)
+    regex = re.compile("TTT" + "\w{21}")
+    # Find all matches of the pattern in the sequence
+    spacers.extend(regex.findall(sequence))
+
+    # Reverse complement the sequence to find spacers on the opposite strand
+    base_complements = str.maketrans("ATCG", "TAGC")
+    rev_complement = sequence.translate(base_complements)[::-1]
+    spacers.extend(regex.findall(rev_complement))
+
+    return spacers
+
+de_spacers = []
+# Iterate through all sequences
+for seq in sequences:
+    # Only consider sequences longer than 100 nucleotides
+    if len(seq) > 100:
+        for i in range(0, len(seq), 100):
+            short_seq = seq[i:i+100]
+            spacers = spacer_design(short_seq)
+            # If spacers are found, append the first one and break
+            if spacers:
+                de_spacers.append(spacers[0])
+                break
+    else:
+        spacers = spacer_design(seq)
+        # If spacers are found, append the first one
+        if spacers:
+            de_spacers.append(spacers[0])
+
+# Define the path for the CSV output
+csv_file_path = "/path/to/cds.csv"
+with open(csv_file_path, 'w', newline='') as csvfile:
+    fieldnames = ['Sequence 5-24', 'Sequence 1-4', 'CG Content']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+
+    # Write each spacer's information to the CSV file
+    for spacer in de_spacers:
+        sequence_5_24 = spacer[4:24]  # Extract nucleotides 5-24 from the spacer
+        sequence_1_4 = spacer[:4]     # Extract the first 4 nucleotides of the spacer
+        cg_content = sum(1 for c in spacer[4:] if c in ['C', 'G']) / 20  # Calculate CG content
+        writer.writerow({'Sequence 5-24': sequence_5_24, 'Sequence 1-4': sequence_1_4, 'CG Content': cg_content})
+
+
+
+#for RBS and promoter ---on-target
+import re
+import csv
+from Bio import SeqIO
+from Bio.Seq import Seq
+
+# Load promoter sequences from a TSV file
+file_path = '/path/to/PromoterSet.tsv'  # Update with your actual file path
+promoters = []
+with open(file_path, newline='') as csvfile:
+    tsvreader = csv.reader(csvfile, delimiter='\t')
+    next(tsvreader)  # Skip header
+    for row in tsvreader:
+        promoters.append(row[5].upper())  # Store promoters in uppercase
+
+# Load sequences from a FASTA file
+fasta_file_path = "/path/to/MG1655.fna"  # Update with your actual file path
+sequences = []
+reverse_complements = []
+
+for record in SeqIO.parse(fasta_file_path, "fasta"):
+    sequence_part = str(record.seq)[:4641652]  # Adjust the slicing as necessary
+    sequences.append(sequence_part)
+    reverse_complements.append(str(Seq(sequence_part).reverse_complement()))
+
+# Design spacers based on promoters
+spacers = []
+for promoter in promoters:
+    found = False
+    # Search in forward sequences
+    for sequence in sequences:
+        if promoter in sequence:
+            ind = sequence.index(promoter)
+            short_sequence = sequence[max(0, ind-10):ind+10+len(promoter)]
+            found = True
+            break
+    # Search in reverse complements if not found in forward sequences
+    if not found:
+        for reverse_complement in reverse_complements:
+            if promoter in reverse_complement:
+                ind = reverse_complement.index(promoter)
+                short_sequence = reverse_complement[max(0, ind-10):ind+10+len(promoter)]
+                found = True
+                break
+    if found:
+        # Extract potential spacers from the short sequence
+        regex = re.compile("TTT\w{21}")
+        spacers.extend(regex.findall(short_sequence))
+
+# Write spacers to a CSV file
+csv_file_path = "/path/to/2all_promote.csv"  # Update with your actual file path
+with open(csv_file_path, 'w', newline='') as csvfile:
+    fieldnames = ['Sequence 5-24', 'Sequence 1-4', 'CG Content']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+    for spacer in spacers:
+        sequence_5_24 = spacer[4:24]
+        sequence_1_4 = spacer[:4]
+        cg_content = sum(1 for c in spacer[4:] if c in ['C', 'G']) / 20
+        writer.writerow({'Sequence 5-24': sequence_5_24, 'Sequence 1-4': sequence_1_4, 'CG Content': cg_content})
+
+
+
+
+# off-target
+import re
+from Bio.Seq import Seq
+import csv
+
+# Function to extract DNA sequence from a FASTA file
+def extract_sequence(file_path):
+    valid_bases = set("ATCGatcg")  # Define valid DNA bases
+    sequence = ""
+    with open(file_path, 'r', errors='ignore') as file:  # Open the file
+        for line in file:  # Read file line by line
+            # Filter out invalid bases and concatenate to sequence
+            filtered_line = ''.join(filter(lambda x: x in valid_bases, line))
+            sequence += filtered_line.upper()  # Convert to uppercase
+    return sequence
+
+# Function to count mismatches between two sequences
+def count_mismatches(seq1, seq2):
+    # Compare each base and count differences
+    return sum(1 for a, b in zip(seq1, seq2) if a != b)
+
+# Load input sequence from a FASTA file
+input_fasta_path = "path/to/your/input_file.fa"
+input_sequence = extract_sequence(input_fasta_path)
+
+# Load reference genome sequence from a FASTA file and calculate its reverse complement
+genome_fasta_path = "path/to/your/reference_genome_file.fa"
+genome_sequence = extract_sequence(genome_fasta_path)
+genome_seq_rc = str(Seq(genome_sequence).reverse_complement())
+
+# Prepare to find sequences starting with specified patterns in the genome and its reverse complement
+patterns = ["TTTT", "TTTC", "TTTG", "TTTA"]
+sequences = {pattern: [] for pattern in patterns}
+for pattern in patterns:
+    regex = re.compile(pattern + "\w{20}")  # Define regex pattern for search
+    sequences[pattern].extend(regex.findall(genome_sequence))  # Search in genome
+    sequences[pattern].extend(regex.findall(genome_seq_rc))  # Search in reverse complement
+
+# Identify potential spacers in the input sequence based on TTT prefix and specific length
+spacer_regex = re.compile("TTT\w{21}")
+spacers = [s for s in spacer_regex.findall(input_sequence) if 0.4 <= sum(c in ['C', 'G'] for c in s[4:]) / 20 <= 0.6]
+
+# Determine the prefix of each spacer for subsequent comparison
+de_cg = [s[:4] for s in spacers]
+
+# List to store spacers with sufficient mismatches to the reference genome
+negative_spacers = []
+
+# Compare each spacer against sequences with matching prefixes in the reference genome
+for i, spacer in enumerate(spacers):
+    pattern = de_cg[i]  # Get the prefix pattern of the current spacer
+    sequences_list = sequences[pattern]  # Retrieve sequences with the same prefix
+
+    # Count mismatches of the current spacer against each retrieved sequence
+    mismatches = [count_mismatches(spacer, seq) for seq in sequences_list]
+    min_mismatch = min(mismatches)  # Find the minimum number of mismatches
+
+    # If minimum mismatches are above threshold, consider it a negative spacer
+    if min_mismatch >= 3:
+        negative_spacers.append(spacer)
+
+# Write the negative spacers along with some additional information to a CSV file
+csv_file_path = "path/to/your/output_file.csv"
+with open(csv_file_path, 'w', newline='') as csvfile:
+    fieldnames = ['Sequence 5-24', 'Sequence 1-4', 'CG Content']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+    writer.writeheader()
+    for spacer in negative_spacers:
+        sequence_5_24 = spacer[4:24]  # Extract subsequence for analysis
+        sequence_1_4 = spacer[:4]  # Get the prefix of the spacer
+        cg_content = sum(1 for c in spacer[4:] if c in ['C', 'G']) / 20  # Calculate CG content
+        # Write the spacer data to the CSV
+        writer.writerow({'Sequence 5-24': sequence_5_24, 'Sequence 1-4': sequence_1_4, 'CG Content': cg_content})
